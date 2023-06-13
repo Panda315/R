@@ -7,7 +7,7 @@ data <- read.csv(file_path)
 # Check the structure of the imported data
 str(data)
 
-# Creating a metadata 
+# Creating metadata
 metadata <- data.frame(
   Samples = c(
     "HYP_CD_LD024_1", "HYP_CD_LD024_2", "HYP_CD_LD024_3",
@@ -47,9 +47,12 @@ metadata <- data.frame(
   )
 )
 
-
-
+# Load necessary libraries
 library(DESeq2)
+library(ggplot2)
+library(pheatmap)
+library(dplyr)
+library(RColorBrewer)
 
 # Exclude the first column from data
 countData <- data[, -1]
@@ -63,25 +66,22 @@ dds <- DESeqDataSetFromMatrix(countData = countData,
                               colData = metadata,
                               design = ~ LD_Cycle + Treatment)
 
-
-
-
 # Pre-filtering to keep raw counts above 10
 keep <- rowSums(counts(dds)) >= 10
-dds <- dds[keep,]
+dds <- dds[keep, ]
 
 # Perform normalization
 dds <- estimateSizeFactors(dds)
 sizeFactors(dds)
 
-# Extracting normalized counts
+# Extract normalized counts
 normalizedmain_data <- counts(dds, normalized = TRUE)
+dim(normalizedmain_data)
+head(normalizedmain_data)
 
 # Performing log transformation
 log <- vst(dds, blind = TRUE)
 
-#####PCA
-library(ggplot2)
 # Perform PCA
 pca <- prcomp(t(assay(log)))
 
@@ -98,16 +98,11 @@ p <- ggplot(pca_data, aes(x = PC1, y = PC2, color = LD_Cycle, shape = Treatment)
 # Print the PCA plot
 print(p)
 
-
-
-dds$LD_Cycle
-dds$Treatment
-
-# Running analysis
+# Running differential expression analysis
 dds <- DESeq(dds)
 resultsNames(dds)
 
-# Exploring Log2fold change
+# Exploring Log2 fold change
 l2f <- results(dds, contrast = c("Treatment", "ABX", "CD"), alpha = 0.05)
 summary(l2f)
 
@@ -117,16 +112,27 @@ plotMA(l2f, ylim = c(-8, 8))
 # Assign row names to the gene names column
 rownames(l2f) <- l2f$gene_name
 # Remove the redundant gene name column
-l2f$GeneName <- NULL
+l2f$gene_name <- NULL
 
 # Create a new column for differential expression status
-# Initialize with "NO CHANGE"
 l2f$diffexpressed <- "NO CHANGE"
 
 # Update differential expression status based on log2 fold change and adjusted p-value cutoffs
 l2f$diffexpressed[l2f$log2FoldChange > 0.32 & l2f$padj < 0.05] <- "UP"
 l2f$diffexpressed[l2f$log2FoldChange < -0.32 & l2f$padj < 0.05] <- "DOWN"
-l2f <- data.frame(l2f)
-#l2f_sig <- subset(l2f_sig, padj < 0.05 & abs(log2FoldChange) > 0.32)
-l2f_sig <- subset(l2f, padj < 0.05 & abs(log2FoldChange) > 0.32)
-l2f_sig <- l2f_sig[order(l2f_sig$padj), ]
+
+# Subset significantly differentially expressed genes only, excluding NAs
+l2f_sig <- l2f[complete.cases(l2f) & l2f$padj < 0.05 & abs(l2f$log2FoldChange) > 0.32, ]
+
+# Subsetting normalized counts to only significant DE genes
+sig_norm_counts <- normalizedmain_data[rownames(l2f_sig), ]
+sig_norm_counts <- t(sig_norm_counts)
+
+# Convert normalized counts to a matrix
+sig_norm_counts <- as.matrix(sig_norm_counts)
+
+# Heatmap
+heat_colors <- brewer.pal(6, "YlOrRd")
+print(dim(normalizedmain_data))
+head(normalizedmain_data)
+pheatmap(sig_norm_counts, color = heat_colors, cluster_rows = TRUE, show_rownames = FALSE, annotation = dplyr::select(metadata, LD_Cycle), scale = "row")
